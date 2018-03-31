@@ -6,6 +6,7 @@
 //v0.3 @ 3/28/2018: 1) implemented ADC oversampling
 //v0.3a@ 3/29/2018: 1) implemented manual ADC calibration
 //v0.4 @ 3/30/2018: going live.
+//v0.5 @ 3/31/2018: 1) added exponential smoothing; 2) all channels calibrated for ADC offset errors
 //
 //connections:
 //
@@ -731,52 +732,53 @@ void led_display(void) {
 //global defines
 //adc channels
 //6 bits mux: mux4..0 in ADMUX, mux5 in ADCSRB
-#define AIN0				0b000000
-#define AIN1				0b000001
-#define AIN4				0b000100
-#define AIN5				0b000101
-#define AIN6				0b000110
-#define AIN7				0b000111
-#define AIN1_0x10		 0b001001
-#define AIN1_0x200			0b001011
-#define AIN0_1				0b010000
-#define AIN4_1				0b010100
-#define AIN5_1				0b010101
-#define AIN6_1				0b010110
-#define AIN7_1				0b010111
-#define AINVBG				0b011110		//1.1Vbg
-#define AINGND				0b011111
-#define AIN8				0b100000
-#define AIN9				0b100001
-#define AIN10			 0b100010
-#define AIN11			 0b100011
-#define AIN12			 0b100100
-#define AIN13			 0b100101
-#define AIN1_0x40		 0b100110
-#define AIN4_0x10		 0b101000
-#define AIN5_0x10		 0b101001
-#define AIN6_0x10		 0b101010
-#define AIN7_0x10		 0b101011
-#define AIN4_1x10		 0b101100
-#define AIN5_1x10		 0b101101
-#define AIN6_1x10		 0b101110
-#define AIN7_1x10		 0b101111
-#define AIN4_0x40		 0b110000
-#define AIN5_0x40		 0b110001
-#define AIN6_0x40		 0b110010
-#define AIN7_0x40		 0b110011
-#define AIN4_1x40		 0b110100
-#define AIN5_1x40		 0b110101
-#define AIN6_1x40		 0b110110
-#define AIN7_1x40		 0b110111
-#define AIN4_0x200			0b111000
-#define AIN5_0x200			0b111001
-#define AIN6_0x200			0b111010
-#define AIN7_0x200			0b111011
-#define AIN4_1x200			0b111100
-#define AIN5_1x200			0b111101
-#define AIN6_1x200			0b111110
-#define AIN7_1x200			0b111111
+#define AIN0			0b000000
+#define AIN1			0b000001
+#define AIN4			0b000100
+#define AIN5			0b000101
+#define AIN6			0b000110
+#define AIN7			0b000111
+#define AIN1_0x10		0b001001
+#define AIN1_0x200		0b001011
+#define AIN0_1			0b010000
+#define AIN4_1			0b010100
+#define AIN5_1			0b010101
+#define AIN6_1			0b010110
+#define AIN7_1			0b010111
+#define AINVBG			0b011110		//1.1Vbg
+#define AINGND			0b011111
+#define AIN8			0b100000
+#define AIN9			0b100001
+#define AIN10			0b100010
+#define AIN11			0b100011
+#define AIN12			0b100100
+#define AIN13			0b100101
+#define AIN1_0x40		0b100110
+#define AINTEMP			0b100111		//temperature sensor
+#define AIN4_0x10		0b101000
+#define AIN5_0x10		0b101001
+#define AIN6_0x10		0b101010
+#define AIN7_0x10		0b101011
+#define AIN4_1x10		0b101100
+#define AIN5_1x10		0b101101
+#define AIN6_1x10		0b101110
+#define AIN7_1x10		0b101111
+#define AIN4_0x40		0b110000
+#define AIN5_0x40		0b110001
+#define AIN6_0x40		0b110010
+#define AIN7_0x40		0b110011
+#define AIN4_1x40		0b110100
+#define AIN5_1x40		0b110101
+#define AIN6_1x40		0b110110
+#define AIN7_1x40		0b110111
+#define AIN4_0x200		0b111000
+#define AIN5_0x200		0b111001
+#define AIN6_0x200		0b111010
+#define AIN7_0x200		0b111011
+#define AIN4_1x200		0b111100
+#define AIN5_1x200		0b111101
+#define AIN6_1x200		0b111110
+#define AIN7_1x200		0b111111
 
 
 //initialize the adc
@@ -853,7 +855,7 @@ int16_t adc_read(uint8_t ain) {
 #define AIN_200x			AIN4_0x200		//PGA gain for low resistance value: 200x input
 #define AIN_10x_CAL			0				//from manual calibration at AIN_10x setting: typically 0
 #define AIN_40x_CAL			0				//from manual calibration at AIN_40x setting: typically 0
-#define AIN_200x_CAL		0				//from manual calibration at AIN_200x setting: typically 8
+#define AIN_200x_CAL		4				//from manual calibration at AIN_200x setting: typically 8
 #define THRSH_10x			200				//threshold for 10x gain. below which, switch to 40x gain. must be less than 1024/(40/10) = 256
 #define THRSH_40x			150				//threshold for 40x gain. below which, switch to 200x gain. must be less than 1024/(200/40) = 200
 #define uOHM_CNT			32				//number of oversampling
@@ -878,7 +880,7 @@ void ledr_flp(void) {
 //read the uOHM for osCNT number of times
 //return the average
 int16_t uOHM_read(uint8_t ain, uint8_t osCNT) {
-	int16_t tmp, tmp1;
+	int16_t tmp;
 	uint8_t cnt;
 	
 	//read at 10x
@@ -897,6 +899,15 @@ int16_t uOHM_read(uint8_t ain, uint8_t osCNT) {
 	
 }
 
+//smooth out the uOHM reading
+#define uOHM_AVGN		32
+uint32_t uOHM_avg(uint32_t uOHM) {
+	static uint32_t sum=0, avg=0;
+	
+	sum += (int32_t) (uOHM - avg);	//update the sum
+	avg = sum / uOHM_AVGN;			//update the avearge
+	return avg;					//return the average
+}
 
 //run only once
 void setup(void) {
@@ -925,8 +936,8 @@ void loop(void) {
 	uint32_t tmp;			 					//temp variable for display
 	uint8_t dp;									//position of the decimal point
 
-	//measure uOHM by auto-ranging the ADC
 	//================measuring uOHM===============
+	//measure uOHM by auto-ranging the ADC
 	//t = micros();
 	//auto ranging - start conversion at the lowest gain / highest resistive range
 	//if the values returned are too small, increase the gain / lower the measurement range
@@ -934,11 +945,18 @@ void loop(void) {
 	if (tmp < THRSH_10x) {tmp = uOHM_read(AIN_40x , uOHM_CNT); uOHM = ADC2uOHM_40x(tmp);}
 	if (tmp < THRSH_40x) {tmp = uOHM_read(AIN_200x, uOHM_CNT); uOHM = ADC2uOHM_200x(tmp);}
 	//t = micros() - t;
+	//smooth out uOHM
+	uOHM = uOHM_avg(uOHM);
 	//tmp = t;									//display the value of t
 	//uOHM = 9600000ul;							//for debug only
 	//optional: error correction
 	uOHM = uOHM_EC(uOHM);						//error correct for uOHM
 	//===============end measuring uOHM===========
+	
+	//===============measuring temperature========
+	//tmp = uOHM_read(AINTEMP, 16);				//adc value = 301-302
+	//===============end measuring temperature====
+	
 	//===============calibrating offset
 	//values shown on the LED display go into AINCAL_10x/MED/LOW macros
 	//manual calibration process:
@@ -953,6 +971,8 @@ void loop(void) {
 	//uOHM = uOHM_read(AIN_40x, uOHM_CNT);		//calibrating medium setting: typically 0
 	//uOHM = uOHM_read(AIN_200x, uOHM_CNT);		//calibrating low setting: typically 0 - 4 - 8, sometimes 12-16-20
 	//===============end calibrating offset=======
+	
+	//display uOHM
 	tmp = uOHM;									//display uOHM
 	//display tmp
 	//now uOHM max is 9999mOhm, with rounding up
@@ -968,5 +988,5 @@ void loop(void) {
 	lRAM[0]= ledfont_num[tmp % 10]; tmp /= 10;
 	lRAM[dp] |= 0x80;							//add floating decimal point
 	//ledr_flp();								//for debug only
-	delay(500);									//slow down the display update frequency
+	//delay(100);									//slow down the display update frequency
 }
