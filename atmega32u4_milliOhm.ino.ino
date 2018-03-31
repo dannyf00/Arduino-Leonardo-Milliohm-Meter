@@ -1,5 +1,62 @@
 //milliOhm meter with 4-digit 7-segment LED display
 //built on ATmega32U4/Arduino Leonardo
+//Revision history:
+//v0.1 @ 3/25/2018: initial release (no ADC)
+//v0.2 @ 3/27/2018: 1) ADC implemented; 2) auto ranging implemented; 3) AFE schematic shown
+//v0.3 @ 3/28/2018: 1) implemented ADC oversampling
+//v0.3a@ 3/29/2018: 1) implemented manual ADC calibration
+//v0.4 @ 3/30/2018: going live.
+//
+//connections:
+//
+//Analog Front End:
+//
+//    +5v
+//     |
+//     |
+//     |
+//     |
+//     |
+//    [ ] R1 (220R)
+//     |
+//     |       R4 (1K)
+//     |------------[ ]--------------- A3 of Leonardo
+//     |                      |
+//     |                      |
+//    [ ] DUT (<10R)          = C1 (.1u)
+//     |                      |
+//     |                      |
+//     |------------[ ]--------------- A5 of Leonardo
+//     |       R5 (1K)
+//     |
+//    [ ] R2 (220R)
+//     |
+//     |
+//     |
+//     |
+//     |
+//    GND
+
+//LED display:
+//DIG1..4 connects to Leonardo directly;
+//SEGA..G + DP connects to Leonardo via 8x 1K resistors
+//connections:
+//LED		Arduino		AVR
+//==========================
+//SEGE		13			PC7
+//SEGD		12			PD6
+//SEGDP	 	11			PB7
+//SEGC		4		 	PD4
+//SEGG		3		 	PD0
+//DIG4		2		 	PD1
+
+//DIG1		10			PB6
+//SEGA		9		 	PB5
+//SEGF		8		 	PB4
+//DIG2		7		 	PE6
+//DIG3		6		 	PD7
+//SEGB		5		 	PC6
+
 
 //=====================================gpio.h==================================
 #ifndef _GPIO_H_
@@ -372,11 +429,10 @@ void tmr4d_act(void (*isr_ptr)(void)) {
 #include "gpio.h"
 
 //hardware configuration
-#define DISPLAY_MAX		 9999						//maximum value to be displayed - modify for your application
+#define DISPLAY_MAX		 9999							//maximum value to be displayed - modify for your application
 
-#ifndef DISPLAY_MODE
-#define DISPLAY_MODE		CC							//CC=common cathod, and CA=common anode
-#endif
+//uncomment if display is CC (common cathode)
+//#define DISPLAY_IS_CA									//CC=common cathod, and CA=common anode
 //end hardware configuration
 
 //global defines
@@ -455,20 +511,20 @@ void led_display(void);
 
 #else
 //digit definitions - for Arduino Leonardo / ATmega32U4 configuration
-//LED		 Arduino	 AVR
+//LED		Arduino		AVR
 //SEGE		13			PC7
 //SEGD		12			PD6
-//SEGDP	 11			PB7
-//SEGC		4		 PD4
-//SEGG		3		 PD0
-//DIG4		2		 PD1
+//SEGDP	 	11			PB7
+//SEGC		4		 	PD4
+//SEGG		3		 	PD0
+//DIG4		2		 	PD1
 
 //DIG1		10			PB6
-//SEGA		9		 PB5
-//SEGF		8		 PB4
-//DIG2		7		 PE6
-//DIG3		6		 PD7
-//SEGB		5		 PC6
+//SEGA		9		 	PB5
+//SEGF		8		 	PB4
+//DIG2		7		 	PE6
+//DIG3		6		 	PD7
+//SEGB		5		 	PC6
 
 //
 #define DIG1_PORT	 PORTB
@@ -524,7 +580,7 @@ void led_display(void);
 #endif
 //end hardware configuration
 
-#if 0			 //DISPLAY_MODE==CA	//for common anode displays
+#if defined(DISPLAY_IS_CA)			 //DISPLAY_MODE==CA	//for common anode displays
 //digit control - active high (Common Anode) or active low (Common Cathode)
 #define DIG_ON(port, pins)		IO_SET(port, pins)			//turn on a digit
 #define DIG_OFF(port, pins)	 IO_CLR(port, pins)			//turn off a digit
@@ -533,7 +589,7 @@ void led_display(void);
 #define SEG_ON(port, pins)		IO_CLR(port, pins)			//turn on a segment
 #define SEG_OFF(port, pins)	 IO_SET(port, pins)			//turn off a segment
 
-#else				 //for common anode displays
+#else				 //for common cathode displays
 //digit control - active high (Common Anode) or active low (Common Cathode)
 #define DIG_ON(port, pins)		IO_CLR(port, pins)			//turn on a digit
 #define DIG_OFF(port, pins)	 IO_SET(port, pins)			//turn off a digit
@@ -746,82 +802,98 @@ int16_t adc_read(uint8_t ain);
 //using internal Vref
 void adc_init(void) {
 	ADCSRA =	(1 << ADEN) |			 //1->turn on the adc, 0->turn off the adc
-						(0 << ADSC) |			 //0->don't star the adc, 1->start the adc
-						(0 << ADATE) |			//1->enable auto trigger, 0->disable auto trigger
-						(0 << ADIF) |			 //0->adc interrupt flag not set, 1->adc interrupt flag set
-						(0 << ADIE) |			 //1->enable adc interrupt, 0->disable adc interrupt
-						(7 << ADPS0) |			//adc prescaler. 0..7: 2x .. 128x
-						0x00;
-	ADMUX =	 (ADMUX & 0x1f) |			//clear highest 3 bits (REFS1/REFS0/ADLAR)
-						(3 << REFS0) |			//select reference: 0->AREF, 1->AVCC, 2->reserved, 3->internal 2.56v Vref
-						(0 << ADLAR) |			//1->left adjust adc result, 0->right adjust adc result
-						0x00;
+				(0 << ADSC) |			 //0->don't star the adc, 1->start the adc
+				(0 << ADATE) |			//1->enable auto trigger, 0->disable auto trigger
+				(0 << ADIF) |			 //0->adc interrupt flag not set, 1->adc interrupt flag set
+				(0 << ADIE) |			 //1->enable adc interrupt, 0->disable adc interrupt
+				(7 << ADPS0) |			//adc prescaler. 0..7: 2x .. 128x
+				0x00;
+	ADMUX =	 	(ADMUX & 0x1f) |			//clear highest 3 bits (REFS1/REFS0/ADLAR)
+				(3 << REFS0) |			//select reference: 0->AREF, 1->AVCC, 2->reserved, 3->internal 2.56v Vref
+				(0 << ADLAR) |			//1->left adjust adc result, 0->right adjust adc result
+				0x00;
 	ADCSRB =	(0 << ADHSM) |			//1->adc high speed mode enabled, 0->disable high speed mode
-						(0 << MUX5) |			 //highest bit of MUX
-						(0 << ADTS0) |			//0..8: 0 free running mode, ...
-						0x00;
+				(0 << MUX5) |			 //highest bit of MUX
+				(0 << ADTS0) |			//0..8: 0 free running mode, ...
+				0x00;
 }
 
 //read adc
 int16_t adc_read(uint8_t ain) {
-	uint16_t tmp;
+	int16_t tmp;
 	//set mux4..0
-	ADMUX =	 (ADMUX & ~0x1f) |		 //clear the MUX4..0 bits
-						(ain & 0x1f);			 //set the channel
-	ADCSRB =	(ADCSRB & ~(1 << MUX5)) | (ain & (1 << MUX5)); //set mux5
-	ADCSRA |=	 (1 << ADSC);				//start the conversion
+	ADMUX =	 	(ADMUX &~0x1f) |		 //clear the MUX4..0 bits
+				(ain & 0x1f);			 //set the channel
+	//set mux5
+	ADCSRB =	(ADCSRB &~(1 << MUX5)) | (ain & (1 << MUX5)); //set mux5
+	ADCSRA |=	(1 << ADSC);				//start the conversion
 	while (ADCSRA & (1 << ADSC)) continue; //wait for conversion to finish
 	//per datasheet, the following read orders must be maintained
 	tmp = ADCL;							 //must read adcl first
-	tmp |= ADCH << 8;					 				//then read ADCH
-	return tmp;
+	tmp |= ADCH << 8;					 //then read ADCH
+	if (tmp & (1<<9)) {tmp &=~(1<<9); tmp = -tmp;}	//for negative values
+	return tmp;						//bipolar adc results
 }
 
 //start of main loop / user code
 
 //hardware configuration
-#define LEDR_PORT		 PORTC
+#define LEDR_PORT		 	PORTC
 #define LEDR_DDR			DDRC
-#define LEDR					(1<<7)
+#define LEDR				(1<<7)
 #define LEDR_DLY			100
 
 #define RuOHM				(440000ul)		//current limit resistors, in mOHM - to be adjusted by user
+#define RuOHM_10x			(RuOHM)			//current limit resistors, in mOHM - to be adjusted by user
+#define RuOHM_40x			(RuOHM)			//current limit resistors, in mOHM - to be adjusted by user
+#define RuOHM_200x			(RuOHM)			//current limit resistors, in mOHM - to be adjusted by user
 //#define AIN_uOHMx1			AIN0_1			//1x input
-#define AIN_HI				AIN4_0x10		//PGA gain for high resistance value: 10x input
-#define AIN_MED				AIN4_0x40		//PGA gain for mediaum resistance value: 40x input
-#define AIN_LOW				AIN4_0x200		//PGA gain for low resistance value: 200x input
-#define THRSH_HI			200				//threshold for 10x gain. below which, switch to 40x gain. must be less than 1024/(40/10) = 256
-#define THRSH_MED			150				//threshold for 40x gain. below which, switch to 200x gain. must be less than 1024/(200/40) = 200
-#define uOHM_CNT			8				//oversampling
+#define AIN_10x				AIN4_0x10		//PGA gain for high resistance value: 10x input
+#define AIN_40x				AIN4_0x40		//PGA gain for mediaum resistance value: 40x input
+#define AIN_200x			AIN4_0x200		//PGA gain for low resistance value: 200x input
+#define AIN_10x_CAL			0				//from manual calibration at AIN_10x setting: typically 0
+#define AIN_40x_CAL			0				//from manual calibration at AIN_40x setting: typically 0
+#define AIN_200x_CAL		0				//from manual calibration at AIN_200x setting: typically 8
+#define THRSH_10x			200				//threshold for 10x gain. below which, switch to 40x gain. must be less than 1024/(40/10) = 256
+#define THRSH_40x			150				//threshold for 40x gain. below which, switch to 200x gain. must be less than 1024/(200/40) = 200
+#define uOHM_CNT			32				//number of oversampling
 //end hardware configuration
 
 //global defines
 #define VREF				2560000ul		//ADC vref, in uv
-#define ADC2uOHM(adc)		((adc) * (VREF / 1024 / 100 / 5) * (RuOHM / 10) / 1)			//convert ADC(1x) to uOHM
-#define ADC2uOHM_HI(adc)	(ADC2uOHM(adc) / 10)
-#define ADC2uOHM_MED(adc)	(ADC2uOHM(adc) / 40)
-#define ADC2uOHM_LOW(adc)	(ADC2uOHM(adc) / 200)
+//#define ADC2uOHM(adc)		((adc) * (VREF / 512 / 100 / 5) * (RuOHM / 10) / 1)			//convert ADC(1x) to uOHM
+#define ADC2uOHM_10x(adc)	((adc) * (VREF / 512 / 100 / 5) * (RuOHM_10x  / 10) / 10)	//512 for differential channels, 1024 for single ended channels
+#define ADC2uOHM_40x(adc)	((adc) * (VREF / 512 / 100 / 5) * (RuOHM_40x / 10) / 40)	//512 for differential channels, 1024 for single ended channels
+#define ADC2uOHM_200x(adc)	((adc) * (VREF / 512 / 100 / 5) * (RuOHM_200x / 10) / 200)	//512 for differential channels, 1024 for single ended channels
 #define uOHM_EC(uOHM)		((uOHM) + ((uOHM) / ((RuOHM) / 1000) * ((uOHM) / 1000) / 1000))		//error correction for uOHM
 
 //global variables
 uint32_t uOHM = 0;
 
-//flip ledr
+//flip ledr - for debugging
 void ledr_flp(void) {
 	IO_FLP(LEDR_PORT, LEDR);
 }
 
-//read the uOHM for CNT counts
+//read the uOHM for osCNT number of times
 //return the average
-int32_t uOHM_read(uint8_t ain, uint8_t CNT) {
-	int16_t tmp=0;
+int16_t uOHM_read(uint8_t ain, uint8_t osCNT) {
+	int16_t tmp, tmp1;
+	uint8_t cnt;
 	
 	//read at 10x
-	adc_read(ain);				//dummy read - ignore the result
-	while (CNT--) {
-		tmp += adc_read(ain);
+	adc_read(ain);				//dummy read - ignore the result from the 1st adc
+	for (tmp=cnt=0; cnt<osCNT; cnt++) {
+		tmp += adc_read(ain);	//oversamples ain
 	}
-	return tmp / CNT;			//return the average
+	tmp = tmp / osCNT;			//calculate the average
+	if (tmp < 0) tmp = 0;		//don't need negative values
+	switch (ain) {
+	case AIN_200x: tmp = (tmp > AIN_200x_CAL)?(tmp - AIN_200x_CAL):0; break;
+	case AIN_40x:  tmp = (tmp > AIN_40x_CAL )?(tmp - AIN_40x_CAL ):0; break;
+	case AIN_10x:  tmp = (tmp > AIN_10x_CAL )?(tmp - AIN_10x_CAL ):0; break;
+	}
+	return tmp;					//return the average
 	
 }
 
@@ -838,48 +910,63 @@ void setup(void) {
 	led_init();
 
 	//install timer and update the led display in the background
-	tmr4_init(TMR4PS_256x);			 //display update frequency = F_CPU / 256 / prescaler = 244Hz per digit, or 244Hz/4=60Hz per frame
+	tmr4_init(TMR4PS_256x);			 			//display update frequency = F_CPU / 256 / prescaler = 244Hz per digit, or 244Hz/4=60Hz per frame
 	tmr4_act(led_display);
 
 	//reset the adc
-	adc_init();									 //prescaler = 128, manual conversion, internal 2.56v reference
+	adc_init();									//prescaler = 128, manual conversion, internal 2.56v reference
 
-	ei();												 //enable interrupts
+	ei();										//enable interrupts
 }
 
 //run repeatedly
 void loop(void) {
-	static uint32_t t;
-	uint32_t tmp;			 //display variable
-	uint8_t dp;
-
-	//uOHM = 1234;				//debug only
+	static uint32_t t;							//for timing measurement
+	uint32_t tmp;			 					//temp variable for display
+	uint8_t dp;									//position of the decimal point
 
 	//measure uOHM by auto-ranging the ADC
+	//================measuring uOHM===============
 	//t = micros();
-	//auto ranging
-	tmp = uOHM_read(AIN_HI, uOHM_CNT); uOHM = ADC2uOHM_HI(tmp);	//120us * uOHM_CNT approximately
-	if (tmp < THRSH_HI ) {tmp = uOHM_read(AIN_MED, uOHM_CNT); uOHM = ADC2uOHM_MED(tmp);}
-	if (tmp < THRSH_MED) {tmp = uOHM_read(AIN_LOW, uOHM_CNT); uOHM = ADC2uOHM_LOW(tmp);}
+	//auto ranging - start conversion at the lowest gain / highest resistive range
+	//if the values returned are too small, increase the gain / lower the measurement range
+	tmp = uOHM_read(AIN_10x, uOHM_CNT); uOHM = ADC2uOHM_10x(tmp);	//120us * uOHM_CNT approximately
+	if (tmp < THRSH_10x) {tmp = uOHM_read(AIN_40x , uOHM_CNT); uOHM = ADC2uOHM_40x(tmp);}
+	if (tmp < THRSH_40x) {tmp = uOHM_read(AIN_200x, uOHM_CNT); uOHM = ADC2uOHM_200x(tmp);}
 	//t = micros() - t;
-	//tmp = t;											//display the value of t
-	//uOHM = 1000ul;								//simulated value, for debug only
+	//tmp = t;									//display the value of t
+	//uOHM = 9600000ul;							//for debug only
 	//optional: error correction
 	uOHM = uOHM_EC(uOHM);						//error correct for uOHM
-	//display uOHM
-	tmp = uOHM;								//display uOHM
+	//===============end measuring uOHM===========
+	//===============calibrating offset
+	//values shown on the LED display go into AINCAL_10x/MED/LOW macros
+	//manual calibration process:
+	//1. connect A3..A5 with a short (low resistance) wire.
+	//2. start the calibration process by setting AINCAL_10x/MED/LOW macros to 0 initially
+	//3. uncomment the corresponding ADC statement below for the corresponding macros to be calibrated
+	//   ie. uncomment AIN_10x to calibrate AIN_10x_CAL
+	//4. compile and upload the code to your chip
+	//5. write down the value displayed on the LED display
+	//6. record that value in the corresponding AIN_10x/MED/LOW_CAL macros
+	//uOHM = uOHM_read(AIN_10x, uOHM_CNT);		//calibrating high setting: typically 0
+	//uOHM = uOHM_read(AIN_40x, uOHM_CNT);		//calibrating medium setting: typically 0
+	//uOHM = uOHM_read(AIN_200x, uOHM_CNT);		//calibrating low setting: typically 0 - 4 - 8, sometimes 12-16-20
+	//===============end calibrating offset=======
+	tmp = uOHM;									//display uOHM
 	//display tmp
-	//now uOHM max is 9999mOhm
-			if (tmp > 999999ul) 	{tmp = tmp / 1000; dp = 3;}		//1000000..9999999uOHM
-	else 	if (tmp >	99999ul)	{tmp = tmp /  100; dp = 2;}		//100000..999999uOHM
-	else 	if (tmp >	 9999ul)	{tmp = tmp /   10; dp = 1;}		//10000..99999uOHM
-	else							{tmp = tmp /    1; dp = 0;}		//0..9999uOHM
+	//now uOHM max is 9999mOhm, with rounding up
+			if (tmp > 999999ul)	{tmp = (tmp + 500) / 1000; dp = 3;}		//1000000..9999999uOHM
+	else 	if (tmp >  99999ul)	{tmp = (tmp +  50) /  100; dp = 2;}		//100000..999999uOHM
+	else 	if (tmp >   9999ul)	{tmp = (tmp +   5) /   10; dp = 1;}		//10000..99999uOHM
+	else						{tmp = (tmp +   0) /    1; dp = 0;}		//0..9999uOHM
 	//convert tmp to font
+	//can be better optimized
 	lRAM[3]= ledfont_num[tmp % 10]; tmp /= 10;
 	lRAM[2]= ledfont_num[tmp % 10]; tmp /= 10;
 	lRAM[1]= ledfont_num[tmp % 10]; tmp /= 10;
 	lRAM[0]= ledfont_num[tmp % 10]; tmp /= 10;
-	lRAM[dp] |= 0x80;							//add decimal point
-	//ledr_flp();
-	//delay(10);
+	lRAM[dp] |= 0x80;							//add floating decimal point
+	//ledr_flp();								//for debug only
+	delay(500);									//slow down the display update frequency
 }
