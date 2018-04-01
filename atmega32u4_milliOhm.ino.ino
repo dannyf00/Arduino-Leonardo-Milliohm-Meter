@@ -7,6 +7,7 @@
 //v0.3a@ 3/29/2018: 1) implemented manual ADC calibration
 //v0.4 @ 3/30/2018: going live.
 //v0.5 @ 3/31/2018: 1) added exponential smoothing; 2) all channels calibrated for ADC offset errors
+//v0.6 @ 3/31/2018: 1) added serial output capability; 2) slowed down the LED update frequency to 10SPS.
 //
 //connections:
 //
@@ -57,6 +58,107 @@
 //DIG2		7		 	PE6
 //DIG3		6		 	PD7
 //SEGB		5		 	PC6
+
+//hardware configuration
+#define LEDR_PORT		 	PORTC
+#define LEDR_DDR			DDRC
+#define LEDR				(1<<7)
+#define LEDR_DLY			100
+
+#define USE_UART							//uncomment if serial output is desired
+//smooth out the uOHM reading - higher number means more weight to historical data
+#define uOHM_AVGN			16				//weight for exponential smoothing
+#define uOHM_DLY			100				//delays between each measurement of uOHM, in ms
+#define RuOHM				(440000ul)		//current limit resistors, in mOHM - to be adjusted by user
+#define RuOHM_10x			(RuOHM)			//current limit resistors, in mOHM - to be adjusted by user
+#define RuOHM_40x			(RuOHM)			//current limit resistors, in mOHM - to be adjusted by user
+#define RuOHM_200x			(RuOHM)			//current limit resistors, in mOHM - to be adjusted by user
+//#define AIN_uOHMx1			AIN0_1			//1x input
+#define AIN_10x				AIN4_0x10		//PGA gain for high resistance value: 10x input
+#define AIN_40x				AIN4_0x40		//PGA gain for mediaum resistance value: 40x input
+#define AIN_200x			AIN4_0x200		//PGA gain for low resistance value: 200x input
+#define AIN_10x_CAL			0				//from manual calibration at AIN_10x setting: typically 0
+#define AIN_40x_CAL			0				//from manual calibration at AIN_40x setting: typically 0
+#define AIN_200x_CAL		4				//from manual calibration at AIN_200x setting: typically 8
+#define THRSH_10x			200				//threshold for 10x gain. below which, switch to 40x gain. must be less than 1024/(40/10) = 256
+#define THRSH_40x			150				//threshold for 40x gain. below which, switch to 200x gain. must be less than 1024/(200/40) = 200
+#define uOHM_CNT			32				//number of oversampling
+
+//digit definitions - for Arduino Leonardo / ATmega32U4 configuration
+//LED		Arduino		AVR
+//SEGE		13			PC7
+//SEGD		12			PD6
+//SEGDP	 	11			PB7
+//SEGC		4		 	PD4
+//SEGG		3		 	PD0
+//DIG4		2		 	PD1
+
+//DIG1		10			PB6
+//SEGA		9		 	PB5
+//SEGF		8		 	PB4
+//DIG2		7		 	PE6
+//DIG3		6		 	PD7
+//SEGB		5		 	PC6
+
+//
+#define DIG1_PORT	 	PORTB
+#define DIG1_DDR		DDRB
+#define DIG1			(1<<6)
+
+#define DIG2_PORT	 	PORTE
+#define DIG2_DDR		DDRE
+#define DIG2			(1<<6)
+
+#define DIG3_PORT	 	PORTD
+#define DIG3_DDR		DDRD
+#define DIG3			(1<<7)
+
+#define DIG4_PORT	 	PORTD
+#define DIG4_DDR		DDRD
+#define DIG4			(1<<1)
+
+//segment definitions
+//map 4-digit led display to pic16f1936 direction
+#define SEGA_PORT	 	PORTB
+#define SEGA_DDR		DDRB
+#define SEGA			(1<<5)
+
+#define SEGB_PORT	 	PORTC
+#define SEGB_DDR		DDRC
+#define SEGB			(1<<6)
+
+#define SEGC_PORT	 	PORTD
+#define SEGC_DDR		DDRD
+#define SEGC			(1<<4)
+
+#define SEGD_PORT	 	PORTD
+#define SEGD_DDR		DDRD
+#define SEGD			(1<<6)
+
+#define SEGE_PORT	 	PORTC
+#define SEGE_DDR		DDRC
+#define SEGE			(1<<7)
+
+#define SEGF_PORT	 	PORTB
+#define SEGF_DDR		DDRB
+#define SEGF			(1<<4)
+
+#define SEGG_PORT	 	PORTD
+#define SEGG_DDR		DDRD
+#define SEGG			(1<<0)
+
+#define SEGDP_PORT		PORTB
+#define SEGDP_DDR	 	DDRB
+#define SEGDP		 	(1<<7)
+//end hardware configuration
+
+//global defines
+#define VREF				2560000ul		//ADC vref, in uv
+//#define ADC2uOHM(adc)		((adc) * (VREF / 512 / 100 / 5) * (RuOHM / 10) / 1)			//convert ADC(1x) to uOHM
+#define ADC2uOHM_10x(adc)	((adc) * (VREF / 512 / 100 / 5) * (RuOHM_10x  / 10) / 10)	//512 for differential channels, 1024 for single ended channels
+#define ADC2uOHM_40x(adc)	((adc) * (VREF / 512 / 100 / 5) * (RuOHM_40x / 10) / 40)	//512 for differential channels, 1024 for single ended channels
+#define ADC2uOHM_200x(adc)	((adc) * (VREF / 512 / 100 / 5) * (RuOHM_200x / 10) / 200)	//512 for differential channels, 1024 for single ended channels
+#define uOHM_EC(uOHM)		((uOHM) + ((uOHM) / ((RuOHM) / 1000) * ((uOHM) / 1000) / 1000))		//error correction for uOHM
 
 
 //=====================================gpio.h==================================
@@ -511,73 +613,6 @@ void led_display(void);
 #define SEGDP		 (1<<3)
 
 #else
-//digit definitions - for Arduino Leonardo / ATmega32U4 configuration
-//LED		Arduino		AVR
-//SEGE		13			PC7
-//SEGD		12			PD6
-//SEGDP	 	11			PB7
-//SEGC		4		 	PD4
-//SEGG		3		 	PD0
-//DIG4		2		 	PD1
-
-//DIG1		10			PB6
-//SEGA		9		 	PB5
-//SEGF		8		 	PB4
-//DIG2		7		 	PE6
-//DIG3		6		 	PD7
-//SEGB		5		 	PC6
-
-//
-#define DIG1_PORT	 PORTB
-#define DIG1_DDR		DDRB
-#define DIG1			(1<<6)
-
-#define DIG2_PORT	 PORTE
-#define DIG2_DDR		DDRE
-#define DIG2			(1<<6)
-
-#define DIG3_PORT	 PORTD
-#define DIG3_DDR		DDRD
-#define DIG3			(1<<7)
-
-#define DIG4_PORT	 PORTD
-#define DIG4_DDR		DDRD
-#define DIG4			(1<<1)
-
-//segment definitions
-//map 4-digit led display to pic16f1936 direction
-#define SEGA_PORT	 PORTB
-#define SEGA_DDR		DDRB
-#define SEGA			(1<<5)
-
-#define SEGB_PORT	 PORTC
-#define SEGB_DDR		DDRC
-#define SEGB			(1<<6)
-
-#define SEGC_PORT	 PORTD
-#define SEGC_DDR		DDRD
-#define SEGC			(1<<4)
-
-#define SEGD_PORT	 PORTD
-#define SEGD_DDR		DDRD
-#define SEGD			(1<<6)
-
-#define SEGE_PORT	 PORTC
-#define SEGE_DDR		DDRC
-#define SEGE			(1<<7)
-
-#define SEGF_PORT	 PORTB
-#define SEGF_DDR		DDRB
-#define SEGF			(1<<4)
-
-#define SEGG_PORT	 PORTD
-#define SEGG_DDR		DDRD
-#define SEGG			(1<<0)
-
-#define SEGDP_PORT		PORTB
-#define SEGDP_DDR	 DDRB
-#define SEGDP		 (1<<7)
-
 #endif
 //end hardware configuration
 
@@ -833,41 +868,11 @@ int16_t adc_read(uint8_t ain) {
 	//per datasheet, the following read orders must be maintained
 	tmp = ADCL;							 //must read adcl first
 	tmp |= ADCH << 8;					 //then read ADCH
-	if (tmp & (1<<9)) {tmp &=~(1<<9); tmp = -tmp;}	//for negative values
+	if (tmp & (1<<9)) {tmp |=~0x03ff; /*tmp = -tmp;*/}	//for negative values
 	return tmp;						//bipolar adc results
 }
 
 //start of main loop / user code
-
-//hardware configuration
-#define LEDR_PORT		 	PORTC
-#define LEDR_DDR			DDRC
-#define LEDR				(1<<7)
-#define LEDR_DLY			100
-
-#define RuOHM				(440000ul)		//current limit resistors, in mOHM - to be adjusted by user
-#define RuOHM_10x			(RuOHM)			//current limit resistors, in mOHM - to be adjusted by user
-#define RuOHM_40x			(RuOHM)			//current limit resistors, in mOHM - to be adjusted by user
-#define RuOHM_200x			(RuOHM)			//current limit resistors, in mOHM - to be adjusted by user
-//#define AIN_uOHMx1			AIN0_1			//1x input
-#define AIN_10x				AIN4_0x10		//PGA gain for high resistance value: 10x input
-#define AIN_40x				AIN4_0x40		//PGA gain for mediaum resistance value: 40x input
-#define AIN_200x			AIN4_0x200		//PGA gain for low resistance value: 200x input
-#define AIN_10x_CAL			0				//from manual calibration at AIN_10x setting: typically 0
-#define AIN_40x_CAL			0				//from manual calibration at AIN_40x setting: typically 0
-#define AIN_200x_CAL		4				//from manual calibration at AIN_200x setting: typically 8
-#define THRSH_10x			200				//threshold for 10x gain. below which, switch to 40x gain. must be less than 1024/(40/10) = 256
-#define THRSH_40x			150				//threshold for 40x gain. below which, switch to 200x gain. must be less than 1024/(200/40) = 200
-#define uOHM_CNT			32				//number of oversampling
-//end hardware configuration
-
-//global defines
-#define VREF				2560000ul		//ADC vref, in uv
-//#define ADC2uOHM(adc)		((adc) * (VREF / 512 / 100 / 5) * (RuOHM / 10) / 1)			//convert ADC(1x) to uOHM
-#define ADC2uOHM_10x(adc)	((adc) * (VREF / 512 / 100 / 5) * (RuOHM_10x  / 10) / 10)	//512 for differential channels, 1024 for single ended channels
-#define ADC2uOHM_40x(adc)	((adc) * (VREF / 512 / 100 / 5) * (RuOHM_40x / 10) / 40)	//512 for differential channels, 1024 for single ended channels
-#define ADC2uOHM_200x(adc)	((adc) * (VREF / 512 / 100 / 5) * (RuOHM_200x / 10) / 200)	//512 for differential channels, 1024 for single ended channels
-#define uOHM_EC(uOHM)		((uOHM) + ((uOHM) / ((RuOHM) / 1000) * ((uOHM) / 1000) / 1000))		//error correction for uOHM
 
 //global variables
 uint32_t uOHM = 0;
@@ -899,8 +904,7 @@ int16_t uOHM_read(uint8_t ain, uint8_t osCNT) {
 	
 }
 
-//smooth out the uOHM reading
-#define uOHM_AVGN		32
+//apply exponential smoothing to uOHM
 uint32_t uOHM_avg(uint32_t uOHM) {
 	static uint32_t sum=0, avg=0;
 	
@@ -927,6 +931,11 @@ void setup(void) {
 	//reset the adc
 	adc_init();									//prescaler = 128, manual conversion, internal 2.56v reference
 
+#if defined(USE_UART)
+	//initialize serial
+	Serial.begin(9600);
+#endif
+	
 	ei();										//enable interrupts
 }
 
@@ -987,6 +996,12 @@ void loop(void) {
 	lRAM[1]= ledfont_num[tmp % 10]; tmp /= 10;
 	lRAM[0]= ledfont_num[tmp % 10]; tmp /= 10;
 	lRAM[dp] |= 0x80;							//add floating decimal point
+	
+#if defined(USE_UART)
+	//serial output, if selected
+	Serial.print("uOHM = "); Serial.print(uOHM); Serial.println("uR.");
+#endif
+
 	//ledr_flp();								//for debug only
-	//delay(100);									//slow down the display update frequency
+	delay(uOHM_DLY);							//slow down the display update frequency
 }
