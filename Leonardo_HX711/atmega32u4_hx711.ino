@@ -5,6 +5,8 @@
 //v0.1 @ 4/1/2018: initial release: LED display only
 //v0.2 @ 4/1/2018: 1) ADC implemented, using Channel A at 128x gain
 //v0.3 @ 4/1/2018: minor bug fix in the display routine
+//v0.4 @ 4/2/2018: implemented ADC offset calibration
+//v0.5 @ 4/2/2018: improved the conversion algorithm from ADC to uOHM
 //
 //connections:
 //
@@ -40,8 +42,10 @@
 //    E- of HX711
 
 //hardware configuration
+#define USE_UART							//comment out if UART is not used
 #define uOHM_AVGN				4			//exponential smoothing for uOHM readings
 #define uOHM_DLY				100			//display delays for uOHM measurement, in ms
+#define ADC_OFFSET				700			//ADC offset calibration: about 600-700
 
 //HX711 connection
 #define HX711GND_PORT			PORTF
@@ -125,10 +129,10 @@
 
 //global defines
 #define VREF 				HX711_VREFmv		//HX711 reference voltage, in mv
-#define RmOHM				(1000000ul)			//current limiting resistor, in mOHM
-#define ADCHI2LO			2048				//ADC threshold above which, switch to ADCHI2uOHM()
-#define ADCHI2uOHM(adc24)	((adc24) * ((VREF) / 5 / 1) / 8192 * ((RmOHM) / 64) / 16 / 16 / 8)		//for adc24 >= 2048 (=ADCHI2LO). high end is about adc24=90,000,000/1OHM
-#define ADCLO2uOHM(adc24)	((adc24) * ((VREF) / 5 / 1) * ((RmOHM) / 64) / 16 / 128 / 2 / 4096)		//for adc24 <= 2048 (=ADCHI2LO)
+#define RmOHM				(2000000ul)			//current limiting resistor, in mOHM
+#define ADCHI2LO			100000ul				//ADC threshold above which, switch to ADCHI2uOHM()
+#define ADCHI2uOHM(adc24)	(ADCLO2uOHM(((adc24) +  64) / 128) * 128)		//for adc24 >= 2048 (=ADCHI2LO). high end is about adc24=90,000,000/1OHM
+#define ADCLO2uOHM(adc24)	((adc24) * (((RmOHM) + 128) / 256) / 128 * (1000 / 8) / 8192)		//for adc24 <= 2048 (=ADCHI2LO)
 #define uOHM_EC(uOHM)		((uOHM) + ((uOHM) / ((RmOHM) / 1000) * ((uOHM) / 1000) / 1000))		//error correction for uOHM
 
 //global variables
@@ -801,7 +805,7 @@ int32_t hx711_read(void) {
 	int32_t tmp=0;
 
 	//hx711_init();							//rest the pins, optional
-	IO_CLR(HX711SCK_PORT, HX711SCK);		//sck idles low
+	//IO_CLR(HX711SCK_PORT, HX711SCK);		//sck idles low
 	do {
 		tmp = tmp << 1;
 		IO_SET(HX711SCK_PORT, HX711SCK);	//rising edge of sck
@@ -840,8 +844,9 @@ int32_t uOHM_read(void) {
 	
 	//read ch A at 128x
 	tmp = hx711_readA128();			//read hx711 128x gain
-	return tmp;					//return the average
-	
+	tmp = tmp - ADC_OFFSET;			//adjust for ADC offset error
+	//if (tmp < 0) lRAM[0] |= 0x80;	//dot on digit 1 indicates a negative number
+	return (tmp>0)?tmp:(-tmp);	//return only the positive values
 }
 
 //apply exponential smoothing to uOHM
@@ -877,6 +882,10 @@ void setup(void) {
 	Serial.begin(9600);
 #endif
 
+	//slow down the clock
+	//CLKPR = 0x80;								//unlock the prescaler
+	//CLKPR = 0x05;								//set the prescaler
+
 	ei();										//enable interrupts
 }
 
@@ -891,7 +900,6 @@ void loop(void) {
 	//t = micros();
 	if (!hx711_busy()) {
 		tmp = uOHM_read();						//read the adc, at 128x gain
-		//tmp = 20480000ul;							//2048->104
 		if (tmp < ADCHI2LO) uOHM = ADCLO2uOHM(tmp);	//convert ADC to uOHM
 		else uOHM = ADCHI2uOHM(tmp);
 		//smooth out uOHM
