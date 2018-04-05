@@ -879,7 +879,7 @@ void setup(void) {
 	hx711_readA128();							//first read - dummy read
 
 #if defined(USE_UART)
-	Serial.begin(9600);
+	Serial1.begin(9600);
 #endif
 
 	//slow down the clock
@@ -935,6 +935,6 @@ void loop(void) {
 	delay(uOHM_DLY);							//slow down the display update frequency - simulate HX711 sample time
 
 #if defined(USE_UART)
-	Serial.print("uOHM = "); Serial.print(uOHM); Serial.println("uR.");
+	Serial1.print("uOHM = "); Serial1.print(uOHM); Serial1.println("uR.");
 #endif
 }
