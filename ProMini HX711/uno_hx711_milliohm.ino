@@ -3,42 +3,38 @@
 //built on ATmega328P/Arduino Uno or similar chips + HX711 24-bit ADC
 //Revision history:
 //v0.1 @ 3/31/2018: initial release: LED display only
-//v0.2 @ 3/31/2018: 1) ADC implemented, using Channel A at 128x gain
-// 2) auto ranging implemented; 3) AFE schematic shown
-//v0.3 @ 3/28/2018: 1) implemented ADC oversampling
-//v0.3a@ 3/29/2018: 1) implemented manual ADC calibration
-//v0.4 @ 3/30/2018: going live.
-//v0.5 @ 3/31/2018: 1) added exponential smoothing; 2) all channels calibrated for ADC offset errors
+//v0.2 @ 3/31/2018: 1) ADC implemented, using Channel A at 128x gain 2) auto ranging implemented; 3) AFE schematic shown
+//v0.5 @ 4/ 6/2018: going live!
 //
 //connections:
 //
 //Analog Front End:
 //
-//    +5v
+//    E+ of HX711
 //     |
 //     |
 //     |
 //     |
 //     |
-//    [ ] R1 (220R) 
-//     |                                                 ===============
-//     |            R4 (1K)                             |               |
-//     |--------------[ ]--------------- CH A+ of HX711 |          GND  | ----> A1/PC1 of UNO
-//     |               |                                |               |
-//     |               |                                |          DOUT | ----> A2/PC2 of Uno
-//    [ ] DUT (<10R)   = C1 (.1u)                       |     HX711     |
-//     |               |                                |          SCLK | ----> A3/PC3 of Uno
-//     |               |                                |               |
-//     |--------------[ ]--------------- CH A- of HX711 |          VCC  | ----> Vcc of UNO
-//     |            R5 (1K)                             |               |
-//     |                                                 ===============
-//    [ ] R2 (220R)
+//    [ ] R1 (1K) 
+//     |                                          ===============
+//     |                                         |               |
+//     |------------------------- CH A+ of HX711 |          GND  | ----> A1/PC1 of Uno
+//     |                                         |               |
+//     |                                         |          DOUT | ----> A2/PC2 of Uno
+//    [ ] DUT (<10R)                             |     HX711     |
+//     |                                         |          SCLK | ----> A3/PC3 of Uno
+//     |                                         |               |
+//     |-------[ ]--------------- CH A- of HX711 |          VCC  | ----> Vcc/5v
+//     |     R5 (1K)                             |               |
+//     |                                          ===============
+//    [ ] R2 (1K)
 //     |
 //     |
 //     |
 //     |
 //     |
-//    GND
+//    E- of HX711
 
 //LED display:
 //DIG1..4 connects to Leonardo directly;
@@ -142,6 +138,7 @@
 #define ADCHI2LO			100000ul				//ADC threshold above which, switch to ADCHI2uOHM()
 #define ADCHI2uOHM(adc24)	(ADCLO2uOHM(((adc24) +  64) / 128) * 128)		//for adc24 >= 2048 (=ADCHI2LO). high end is about adc24=90,000,000/1OHM
 #define ADCLO2uOHM(adc24)	((adc24) * (((RmOHM) + 128) / 256) / 128 * (1000 / 8) / 8192)		//for adc24 <= 2048 (=ADCHI2LO)
+#define ADC2uOHM(adc24)		((double) (adc24) * (RmOHM) * 1000.0 / 128.0 / (1ul << 24))			//floating point conversion algorithm
 #define uOHM_EC(uOHM)		((uOHM) + ((uOHM) / ((RmOHM) / 1000) * ((uOHM) / 1000) / 1000))		//error correction for uOHM
 
 //global variables
@@ -846,8 +843,9 @@ void loop(void) {
 	//t = micros();
 	if (!hx711_busy()) {
 		tmp = uOHM_read();						//read the adc, at 128x gain
-		if (tmp < ADCHI2LO) uOHM = ADCLO2uOHM(tmp);	//convert ADC to uOHM
-		else uOHM = ADCHI2uOHM(tmp);
+		//if (tmp < ADCHI2LO) uOHM = ADCLO2uOHM(tmp);	//convert ADC to uOHM
+		//else uOHM = ADCHI2uOHM(tmp);
+		uOHM = (uint32_t) ADC2uOHM(tmp);					//floating point math version
 		//smooth out uOHM
 		uOHM = uOHM_avg(uOHM);
 		//optional: error correction
