@@ -8,6 +8,13 @@
 //v0.4 @ 4/2/2018: implemented ADC offset calibration
 //v0.5 @ 4/2/2018: improved the conversion algorithm from ADC to uOHM
 //
+//manual caliberation of ADC offset:
+//1. short the test probes (CH A+ to CH A-, then connect them to either R1/DUT, or DUT/R2
+//2. change the code to display just ADC results;
+//3. record the number displayed on the LED. the ADC offset is either positive or negative of that number;
+//4. try either one of the two values, and the one that minimizes the value displayed on the LED is the correct value;
+//5. save the correct value in ADC_OFFSET.
+//
 //connections:
 //
 //Analog Front End:
@@ -43,7 +50,7 @@
 
 //hardware configuration
 #define USE_UART							//comment out if UART is not used
-#define uOHM_AVGN				4			//exponential smoothing for uOHM readings
+#define uOHM_AVGN				2			//exponential smoothing for uOHM readings
 #define uOHM_DLY				100			//display delays for uOHM measurement, in ms
 #define ADC_OFFSET				700			//ADC offset calibration: about 600-700
 
@@ -133,6 +140,7 @@
 #define ADCHI2LO			100000ul				//ADC threshold above which, switch to ADCHI2uOHM()
 #define ADCHI2uOHM(adc24)	(ADCLO2uOHM(((adc24) +  64) / 128) * 128)		//for adc24 >= 2048 (=ADCHI2LO). high end is about adc24=90,000,000/1OHM
 #define ADCLO2uOHM(adc24)	((adc24) * (((RmOHM) + 128) / 256) / 128 * (1000 / 8) / 8192)		//for adc24 <= 2048 (=ADCHI2LO)
+#define ADC2uOHM(adc24)		((uint32_t) ((double) (adc24) * (RmOHM) * 1000.0 / 128.0 / (1ul << 24)))		//floating point conversion algorithm
 #define uOHM_EC(uOHM)		((uOHM) + ((uOHM) / ((RmOHM) / 1000) * ((uOHM) / 1000) / 1000))		//error correction for uOHM
 
 //global variables
@@ -900,8 +908,9 @@ void loop(void) {
 	//t = micros();
 	if (!hx711_busy()) {
 		tmp = uOHM_read();						//read the adc, at 128x gain
-		if (tmp < ADCHI2LO) uOHM = ADCLO2uOHM(tmp);	//convert ADC to uOHM
-		else uOHM = ADCHI2uOHM(tmp);
+		//if (tmp < ADCHI2LO) uOHM = ADCLO2uOHM(tmp);	//convert ADC to uOHM
+		//else uOHM = ADCHI2uOHM(tmp);
+		uOHM = ADC2uOHM(tmp);					//floating point algotirhm
 		//smooth out uOHM
 		uOHM = uOHM_avg(uOHM);
 		//optional: error correction
